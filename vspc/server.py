@@ -13,12 +13,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
 import asyncio
 import functools
 import os
 import ssl
 import sys
+import subprocess
 
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -38,7 +38,9 @@ opts = [
     cfg.StrOpt('uri', help='VSPC URI'),
     cfg.StrOpt('serial_log_dir', help='The directory where serial logs are '
                                       'saved'),
-    ]
+    cfg.StrOpt('username', help='The username for serial logs endpoint '),
+    cfg.StrOpt('password', help='The password for serial logs endpoint '),
+]
 
 CONF = cfg.CONF
 CONF.register_opts(opts)
@@ -170,6 +172,7 @@ class VspcServer(object):
         socket = writer.get_extra_info('socket')
         if cmd == SE and data[0:1] == VMWARE_EXT:
             vmw_cmd = data[1:2]
+
             if vmw_cmd == KNOWN_SUBOPTIONS_1:
                 yield from self.handle_known_suboptions(writer, data[2:])
             elif vmw_cmd == DO_PROXY:
@@ -217,7 +220,13 @@ class VspcServer(object):
         LOG.info("%s disconnected", peer)
         writer.close()
 
+    def handle_console_log(self):
+        LOG.info('Starting console log output...')
+        subprocess.Popen("python3.5 /opt/stack/vmware-vspc/vspc/console_log.py", shell=True)
+        LOG.info('Console log started')
+
     def start(self):
+        self.handle_console_log()
         loop = asyncio.get_event_loop()
         ssl_context = None
         if CONF.cert:
@@ -257,6 +266,8 @@ def main():
     srv = VspcServer()
     srv.start()
 
+
+#app = Flask(__name__)
 
 if __name__ == '__main__':
     main()
