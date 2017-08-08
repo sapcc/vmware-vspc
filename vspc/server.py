@@ -220,13 +220,7 @@ class VspcServer(object):
         LOG.info("%s disconnected", peer)
         writer.close()
 
-    def handle_console_log(self):
-        LOG.info('Starting console log output...')
-        subprocess.Popen("python3.5 /opt/stack/vmware-vspc/vspc/console_log.py", shell=True)
-        LOG.info('Console log started')
-
     def start(self):
-        self.handle_console_log()
         loop = asyncio.get_event_loop()
         ssl_context = None
         if CONF.cert:
@@ -266,8 +260,6 @@ def main():
     srv = VspcServer()
     srv.start()
 
-
-#app = Flask(__name__)
 
 if __name__ == '__main__':
     main()

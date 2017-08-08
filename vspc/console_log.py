@@ -67,9 +67,9 @@ def retrieve_console_log(uuid):
     """
     uuid = uuid.replace(' ', '')
     uuid = uuid.replace('-', '')
-    LOG.info('Opening %s for reading console logs.', "/opt/stack/vspc/")
+    LOG.info('Opening %s for reading console logs.', CONF.serial_log_dir)
     LOG.info('Reading file %s ...', uuid)
-    file_path = "/opt/vmware/vspc/" + uuid
+    file_path = CONF.serial_log_dir + "/" + uuid
 
     if os.path.isfile(file_path) is False:
         LOG.error('File path %s not found!', file_path)
