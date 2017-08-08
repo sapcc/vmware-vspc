@@ -13,12 +13,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
 import asyncio
 import functools
 import os
 import ssl
 import sys
+import subprocess
 
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -38,7 +38,9 @@ opts = [
     cfg.StrOpt('uri', help='VSPC URI'),
     cfg.StrOpt('serial_log_dir', help='The directory where serial logs are '
                                       'saved'),
-    ]
+    cfg.StrOpt('username', help='The username for serial logs endpoint '),
+    cfg.StrOpt('password', help='The password for serial logs endpoint '),
+]
 
 CONF = cfg.CONF
 CONF.register_opts(opts)
@@ -170,6 +172,7 @@ class VspcServer(object):
         socket = writer.get_extra_info('socket')
         if cmd == SE and data[0:1] == VMWARE_EXT:
             vmw_cmd = data[1:2]
+
             if vmw_cmd == KNOWN_SUBOPTIONS_1:
                 yield from self.handle_known_suboptions(writer, data[2:])
             elif vmw_cmd == DO_PROXY:
