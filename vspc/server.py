@@ -18,7 +18,8 @@ import functools
 import os
 import ssl
 import sys
-import subprocess
+from aiohttp import web
+from aiohttp_basicauth import BasicAuthMiddleware
 
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -32,14 +33,17 @@ opts = [
                help='Host on which to listen for incoming requests'),
     cfg.IntOpt('port',
                default=13370,
-               help='Port on which to listen for incoming requests'),
+               help='Port on which to listen for incoming telnet requests'),
+    cfg.IntOpt('web_port',
+               default=13371,
+               help='Port on which to listen for incoming rest requests'),
     cfg.StrOpt('cert', help='SSL certificate file'),
     cfg.StrOpt('key', help='SSL key file (if separate from cert)'),
     cfg.StrOpt('uri', help='VSPC URI'),
     cfg.StrOpt('serial_log_dir', help='The directory where serial logs are '
                                       'saved'),
-    cfg.StrOpt('username', help='The username for serial logs endpoint '),
-    cfg.StrOpt('password', help='The password for serial logs endpoint '),
+    cfg.StrOpt('username', help='The username for serial logs web endpoint '),
+    cfg.StrOpt('password', help='The password for serial logs web endpoint '),
 ]
 
 CONF = cfg.CONF
@@ -220,21 +224,55 @@ class VspcServer(object):
         LOG.info("%s disconnected", peer)
         writer.close()
 
+    async def handle_get_consolelog(self, request):
+        uuid = request.match_info.get('uuid')
+        if not uuid:
+            raise web.HTTPNotFound()
+
+        uuid = uuid.replace('-', '').strip()
+
+        LOG.info('Reading file %s/%s ...', CONF.serial_log_dir, uuid)
+        file_path = CONF.serial_log_dir + "/" + uuid
+
+        if os.path.isfile(file_path) is False:
+            LOG.error('File path %s not found!', file_path)
+            raise web.HTTPNotFound()
+
+        with open(file_path, 'r') as f:
+            file_content = f.read()
+
+        return web.Response(text=file_content)
+
     def start(self):
         loop = asyncio.get_event_loop()
         ssl_context = None
         if CONF.cert:
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
             ssl_context.load_cert_chain(certfile=CONF.cert, keyfile=CONF.key)
+
+        if CONF.username:
+            auth = BasicAuthMiddleware(username=CONF.username, password=CONF.password)
+            app = web.Application(middlewares=[auth])
+        else:
+            app = web.Application()
+        app.router.add_get('/console_log/{uuid}', self.handle_get_consolelog)
+        web_server = app.make_handler()
+
         coro = asyncio.start_server(self.handle_telnet,
                                     CONF.host,
                                     CONF.port,
                                     ssl=ssl_context,
                                     loop=loop)
-        server = loop.run_until_complete(coro)
+        webserv = loop.create_server(web_server,
+                                      CONF.host,
+                                      CONF.web_port,
+                                      ssl=ssl_context)
+        telnet_server = loop.run_until_complete(coro)
+        rest_server = loop.run_until_complete(webserv)
 
         # Serve requests until Ctrl+C is pressed
-        LOG.info("Serving on %s", server.sockets[0].getsockname())
+        LOG.info("Serving telnet on %s", telnet_server.sockets[0].getsockname())
+        LOG.info("Serving rest api on %s", rest_server.sockets[0].getsockname())
         LOG.info("Log directory: %s", CONF.serial_log_dir)
         try:
             loop.run_forever()
@@ -242,8 +280,10 @@ class VspcServer(object):
             pass
 
         # Close the server
-        server.close()
-        loop.run_until_complete(server.wait_closed())
+        telnet_server.close()
+        rest_server.close()
+        loop.run_until_complete(telnet_server.wait_closed())
+        loop.run_until_complete(rest_server.wait_closed())
         loop.close()
 
 
