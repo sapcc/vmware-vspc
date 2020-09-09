@@ -2,6 +2,7 @@
 
 FROM python:3.5
 MAINTAINER "Andrew Karpow <andrew.karpow@sap.com>"
+LABEL source_repository="https://github.com/sapcc/vmware-vspc"
 
 WORKDIR /usr/src/app
 COPY . .
