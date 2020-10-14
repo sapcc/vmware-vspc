@@ -83,8 +83,7 @@ class VspcServer(object):
     def __init__(self):
         self.sock_to_uuid = dict()
 
-    @asyncio.coroutine
-    def handle_known_suboptions(self, writer, data):
+    async def handle_known_suboptions(self, writer, data):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.debug("<< %s KNOWN-SUBOPTIONS-1 %s", peer, data)
@@ -93,10 +92,9 @@ class VspcServer(object):
                      SUPPORTED_OPTS + IAC + SE)
         LOG.debug(">> %s GET-VM-VC-UUID", peer)
         writer.write(IAC + SB + VMWARE_EXT + GET_VM_VC_UUID + IAC + SE)
-        yield from writer.drain()
+        await writer.drain()
 
-    @asyncio.coroutine
-    def handle_do_proxy(self, writer, data):
+    async def handle_do_proxy(self, writer, data):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         dir, uri = data[0], data[1:].decode('ascii')
@@ -104,12 +102,12 @@ class VspcServer(object):
         if chr(dir) != 'S' or uri != CONF.uri:
             LOG.debug(">> %s WONT-PROXY", peer)
             writer.write(IAC + SB + VMWARE_EXT + WONT_PROXY + IAC + SE)
-            yield from writer.drain()
+            await writer.drain()
             writer.close()
         else:
             LOG.debug(">> %s WILL-PROXY", peer)
             writer.write(IAC + SB + VMWARE_EXT + WILL_PROXY + IAC + SE)
-            yield from writer.drain()
+            await writer.drain()
 
     def handle_vm_vc_uuid(self, socket, data):
         peer = socket.getpeername()
@@ -119,8 +117,7 @@ class VspcServer(object):
         uuid = uuid.replace('-', '')
         self.sock_to_uuid[socket] = uuid
 
-    @asyncio.coroutine
-    def handle_vmotion_begin(self, writer, data):
+    async def handle_vmotion_begin(self, writer, data):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.debug("<< %s VMOTION-BEGIN %s", peer, data)
@@ -128,88 +125,83 @@ class VspcServer(object):
         LOG.debug(">> %s VMOTION-GOAHEAD %s %s", peer, data, secret)
         writer.write(IAC + SB + VMWARE_EXT + VMOTION_GOAHEAD +
                      data + secret + IAC + SE)
-        yield from writer.drain()
+        await writer.drain()
 
-    @asyncio.coroutine
-    def handle_vmotion_peer(self, writer, data):
+    async def handle_vmotion_peer(self, writer, data):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.debug("<< %s VMOTION-PEER %s", peer, data)
         LOG.debug("<< %s VMOTION-PEER-OK %s", peer, data)
         writer.write(IAC + SB + VMWARE_EXT + VMOTION_PEER_OK + data + IAC + SE)
-        yield from writer.drain()
+        await writer.drain()
 
     def handle_vmotion_complete(self, socket, data):
         peer = socket.getpeername()
         LOG.debug("<< %s VMOTION-COMPLETE %s", peer, data)
 
-    @asyncio.coroutine
-    def handle_do(self, writer, opt):
+    async def handle_do(self, writer, opt):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.debug("<< %s DO %s", peer, opt)
         if opt in (BINARY, SGA):
             LOG.debug(">> %s WILL", peer)
             writer.write(IAC + WILL + opt)
-            yield from writer.drain()
+            await writer.drain()
         else:
             LOG.debug(">> %s WONT", peer)
             writer.write(IAC + WONT + opt)
-            yield from writer.drain()
+            await writer.drain()
 
-    @asyncio.coroutine
-    def handle_will(self, writer, opt):
+    async def handle_will(self, writer, opt):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.debug("<< %s WILL %s", peer, opt)
         if opt in (BINARY, SGA, VMWARE_EXT):
             LOG.debug(">> %s DO", peer)
             writer.write(IAC + DO + opt)
-            yield from writer.drain()
+            await writer.drain()
         else:
             LOG.debug(">> %s DONT", peer)
             writer.write(IAC + DONT + opt)
-            yield from writer.drain()
+            await writer.drain()
 
-    @asyncio.coroutine
-    def option_handler(self, cmd, opt, writer, data=None):
+    async def option_handler(self, cmd, opt, writer, data=None):
         socket = writer.get_extra_info('socket')
         if cmd == SE and data[0:1] == VMWARE_EXT:
             vmw_cmd = data[1:2]
 
             if vmw_cmd == KNOWN_SUBOPTIONS_1:
-                yield from self.handle_known_suboptions(writer, data[2:])
+                await self.handle_known_suboptions(writer, data[2:])
             elif vmw_cmd == DO_PROXY:
-                yield from self.handle_do_proxy(writer, data[2:])
+                await self.handle_do_proxy(writer, data[2:])
             elif vmw_cmd == VM_VC_UUID:
                 self.handle_vm_vc_uuid(socket, data[2:])
             elif vmw_cmd == VMOTION_BEGIN:
-                yield from self.handle_vmotion_begin(writer, data[2:])
+                await self.handle_vmotion_begin(writer, data[2:])
             elif vmw_cmd == VMOTION_PEER:
-                yield from self.handle_vmotion_peer(writer, data[2:])
+                await self.handle_vmotion_peer(writer, data[2:])
             elif vmw_cmd == VMOTION_COMPLETE:
                 self.handle_vmotion_complete(socket, data[2:])
             else:
                 LOG.error("Unknown VMware cmd: %s %s", vmw_cmd, data[2:])
                 writer.close()
         elif cmd == DO:
-            yield from self.handle_do(writer, opt)
+            await self.handle_do(writer, opt)
         elif cmd == WILL:
-            yield from self.handle_will(writer, opt)
+            await self.handle_will(writer, opt)
 
     def save_to_log(self, uuid, data):
         fpath = os.path.join(CONF.serial_log_dir, uuid)
         with open(fpath, 'ab') as f:
             f.write(data)
 
-    @asyncio.coroutine
-    def handle_telnet(self, reader, writer):
+    async def handle_telnet(self, reader, writer):
         opt_handler = functools.partial(self.option_handler, writer=writer)
         telnet = async_telnet.AsyncTelnet(reader, opt_handler)
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.info("%s connected", peer)
-        data = yield from telnet.read_some()
+        data = await telnet.read_some()
         uuid = self.sock_to_uuid.get(socket)
         if uuid is None:
             LOG.error("%s didn't present UUID", peer)
@@ -218,7 +210,7 @@ class VspcServer(object):
         try:
             while data:
                 self.save_to_log(uuid, data)
-                data = yield from telnet.read_some()
+                data = await telnet.read_some()
         finally:
             self.sock_to_uuid.pop(socket, None)
         LOG.info("%s disconnected", peer)
