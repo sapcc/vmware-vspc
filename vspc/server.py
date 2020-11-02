@@ -139,6 +139,12 @@ class VspcServer(object):
         peer = socket.getpeername()
         LOG.debug("<< %s VMOTION-COMPLETE %s", peer, data)
 
+    def handle_vmotion_abort(self, writer, data):
+        socket = writer.get_extra_info('socket')
+        peer = socket.getpeername()
+        LOG.debug("<< %s VMOTION-ABORT %s", peer, data)
+        writer.close()
+
     async def handle_do(self, writer, opt):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
@@ -182,6 +188,8 @@ class VspcServer(object):
                 await self.handle_vmotion_peer(writer, data[2:])
             elif vmw_cmd == VMOTION_COMPLETE:
                 self.handle_vmotion_complete(socket, data[2:])
+            elif vmw_cmd == VMOTION_ABORT:
+                self.handle_vmotion_abort(writer, data[2:])
             else:
                 LOG.error("Unknown VMware cmd: %s %s", vmw_cmd, data[2:])
                 writer.close()
