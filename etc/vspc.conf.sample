@@ -6,4 +6,4 @@ cert = cert.pem
 key = key.pem
 uri = vmware-vspc
 serial_log_dir = /opt/vmware/vspc
-
+log_file_size = 1073741824

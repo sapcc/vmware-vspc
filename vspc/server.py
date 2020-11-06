@@ -22,6 +22,7 @@ from aiohttp import web
 from aiohttp_basicauth import BasicAuthMiddleware
 
 import aiofiles
+from aiofiles import os as aio_os
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -43,6 +44,8 @@ opts = [
     cfg.StrOpt('uri', help='VSPC URI'),
     cfg.StrOpt('serial_log_dir', help='The directory where serial logs are '
                                       'saved'),
+    cfg.StrOpt('log_file_size', default=None,
+               help='The size of log file in bytes'),
     cfg.StrOpt('username', help='The username for serial logs web endpoint '),
     cfg.StrOpt('password', help='The password for serial logs web endpoint '),
 ]
@@ -195,6 +198,24 @@ class VspcServer(object):
         fpath = os.path.join(CONF.serial_log_dir, uuid)
         async with aiofiles.open(fpath, 'ab') as f:
             await f.write(data)
+        if CONF.log_file_size and os.path.getsize(fpath) > CONF.log_file_size:
+            truncated_data = await self.truncate_log_file(fpath, CONF.log_file_size)
+            await self.rewrite_file(fpath, truncated_data)
+
+    async def truncate_log_file(self, file_name, size):
+        async with aiofiles.open(file_name, "rb") as read_obj:
+            await read_obj.seek(0, os.SEEK_END)
+            pointer_location = await read_obj.tell()
+            start_point = pointer_location - size
+            await read_obj.seek(start_point)
+            return await read_obj.read()
+
+    async def rewrite_file(self, path, data):
+        tmp_path = "tmp_" + path
+        async with aiofiles.open(tmp_path, "wb") as f:
+            await f.write(data)
+        await aio_os.remove(path)
+        await aio_os.rename(tmp_path, path)
 
     async def handle_telnet(self, reader, writer):
         opt_handler = functools.partial(self.option_handler, writer=writer)
