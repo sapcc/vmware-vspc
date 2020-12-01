@@ -22,6 +22,7 @@ from aiohttp import web
 from aiohttp_basicauth import BasicAuthMiddleware
 
 import aiofiles
+from async_timeout import timeout
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -91,6 +92,7 @@ class VspcServer(object):
         LOG.debug(">> %s KNOWN-SUBOPTIONS-2 %s", peer, SUPPORTED_OPTS)
         writer.write(IAC + SB + VMWARE_EXT + KNOWN_SUBOPTIONS_2 +
                      SUPPORTED_OPTS + IAC + SE)
+        await writer.drain()
         LOG.debug(">> %s GET-VM-VC-UUID", peer)
         writer.write(IAC + SB + VMWARE_EXT + GET_VM_VC_UUID + IAC + SE)
         await writer.drain()
@@ -105,6 +107,7 @@ class VspcServer(object):
             writer.write(IAC + SB + VMWARE_EXT + WONT_PROXY + IAC + SE)
             await writer.drain()
             writer.close()
+            await writer.wait_closed()
         else:
             LOG.debug(">> %s WILL-PROXY", peer)
             writer.write(IAC + SB + VMWARE_EXT + WILL_PROXY + IAC + SE)
@@ -185,7 +188,9 @@ class VspcServer(object):
                 self.handle_vmotion_complete(socket, data[2:])
             else:
                 LOG.error("Unknown VMware cmd: %s %s", vmw_cmd, data[2:])
+                await writer.drain()
                 writer.close()
+                await writer.wait_closed()
         elif cmd == DO:
             await self.handle_do(writer, opt)
         elif cmd == WILL:
@@ -202,20 +207,26 @@ class VspcServer(object):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.info("%s connected", peer)
-        data = await telnet.read_some()
+        async with timeout(10):
+            data = await telnet.read_some()
         uuid = self.sock_to_uuid.get(socket)
         if uuid is None:
             LOG.error("%s didn't present UUID", peer)
+            await writer.drain()
             writer.close()
+            await writer.wait_closed()
             return
         try:
             while data:
                 await self.save_to_log(uuid, data)
-                data = await telnet.read_some()
+                async with timeout(10):
+                    data = await telnet.read_some()
         finally:
             self.sock_to_uuid.pop(socket, None)
-        LOG.info("%s disconnected", peer)
-        writer.close()
+            LOG.info("%s disconnected", peer)
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
 
     async def handle_get_consolelog(self, request):
         uuid = request.match_info.get('uuid')
@@ -249,7 +260,7 @@ class VspcServer(object):
         else:
             app = web.Application()
         app.router.add_get('/console_log/{uuid}', self.handle_get_consolelog)
-        web_server = app.make_handler()
+        web_server = app.make_handler(loop=loop)
 
         coro = asyncio.start_server(self.handle_telnet,
                                     CONF.host,
@@ -271,13 +282,14 @@ class VspcServer(object):
             loop.run_forever()
         except KeyboardInterrupt:
             pass
+        finally:
+            # Close the server
+            telnet_server.close()
+            rest_server.close()
 
-        # Close the server
-        telnet_server.close()
-        rest_server.close()
-        loop.run_until_complete(telnet_server.wait_closed())
-        loop.run_until_complete(rest_server.wait_closed())
-        loop.close()
+            loop.run_until_complete(telnet_server.wait_closed())
+            loop.run_until_complete(rest_server.wait_closed())
+            loop.close()
 
 
 def main():
