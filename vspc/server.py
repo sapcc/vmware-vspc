@@ -214,7 +214,6 @@ class VspcServer(object):
         tmp_path = "tmp_" + path
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(data)
-        await aio_os.remove(path)
         await aio_os.rename(tmp_path, path)
 
     async def handle_telnet(self, reader, writer):
