@@ -143,7 +143,6 @@ class VspcServer(object):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         LOG.debug("<< %s VMOTION-ABORT %s", peer, data)
-        writer.close()
 
     async def handle_do(self, writer, opt):
         socket = writer.get_extra_info('socket')
