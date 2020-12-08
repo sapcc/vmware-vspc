@@ -199,16 +199,20 @@ class VspcServer(object):
         async with aiofiles.open(fpath, 'ab') as f:
             await f.write(data)
         if CONF.log_file_size and os.path.getsize(fpath) > CONF.log_file_size:
-            truncated_data = await self.truncate_log_file(fpath, CONF.log_file_size)
-            await self.rewrite_file(fpath, truncated_data)
+            await self.truncate_log_file(fpath, CONF.log_file_size)
 
-    async def truncate_log_file(self, file_name, size):
-        async with aiofiles.open(file_name, "rb") as read_obj:
+    async def truncate_log_file(self, file_path, size):
+        async with aiofiles.open(file_path, "rb") as read_obj:
+            # Need to seek to the end of file to prevent the `OverflowError`
+            # on a large file, i.e. 30 GB
             await read_obj.seek(0, os.SEEK_END)
             pointer_location = await read_obj.tell()
             start_point = pointer_location - size
             await read_obj.seek(start_point)
-            return await read_obj.read()
+            # Need to do `readline()` to prevent saving broken line
+            await read_obj.readline()
+            truncated_data = await read_obj.read()
+            await self.rewrite_file(file_path, truncated_data)
 
     async def rewrite_file(self, path, data):
         tmp_path = "tmp_" + path
