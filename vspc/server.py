@@ -84,29 +84,38 @@ class VspcServer(object):
     def __init__(self):
         self.sock_to_uuid = dict()
 
-    async def handle_known_suboptions(self, writer, data):
+    async def handle_known_suboptions(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
-        LOG.debug("<< %s KNOWN-SUBOPTIONS-1 %s", peer, data)
-        LOG.debug(">> %s KNOWN-SUBOPTIONS-2 %s", peer, SUPPORTED_OPTS)
+        LOG.debug(
+            "%s << %s KNOWN-SUBOPTIONS-1 %s",
+            vm_uuid, peer, data
+        )
+        LOG.debug(
+            "%s >> %s KNOWN-SUBOPTIONS-2 %s",
+            vm_uuid, peer, SUPPORTED_OPTS
+        )
         writer.write(IAC + SB + VMWARE_EXT + KNOWN_SUBOPTIONS_2 +
                      SUPPORTED_OPTS + IAC + SE)
-        LOG.debug(">> %s GET-VM-VC-UUID", peer)
+        LOG.debug("%s >> %s GET-VM-VC-UUID", vm_uuid, peer)
         writer.write(IAC + SB + VMWARE_EXT + GET_VM_VC_UUID + IAC + SE)
         await writer.drain()
 
-    async def handle_do_proxy(self, writer, data):
+    async def handle_do_proxy(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
         dir, uri = data[0], data[1:].decode('ascii')
-        LOG.debug("<< %s DO-PROXY %c %s", peer, dir, uri)
+        LOG.debug(
+            "%s << %s DO-PROXY %c %s",
+            vm_uuid, peer, dir, uri
+        )
         if chr(dir) != 'S' or uri != CONF.uri:
-            LOG.debug(">> %s WONT-PROXY", peer)
+            LOG.debug("%s >> %s WONT-PROXY", vm_uuid, peer)
             writer.write(IAC + SB + VMWARE_EXT + WONT_PROXY + IAC + SE)
             await writer.drain()
             writer.close()
         else:
-            LOG.debug(">> %s WILL-PROXY", peer)
+            LOG.debug("%s >> %s WILL-PROXY", vm_uuid, peer)
             writer.write(IAC + SB + VMWARE_EXT + WILL_PROXY + IAC + SE)
             await writer.drain()
 
@@ -118,85 +127,100 @@ class VspcServer(object):
         uuid = uuid.replace('-', '')
         self.sock_to_uuid[socket] = uuid
 
-    async def handle_vmotion_begin(self, writer, data):
+    async def handle_vmotion_begin(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
-        LOG.debug("<< %s VMOTION-BEGIN %s", peer, data)
+        LOG.debug(
+            "%s << %s VMOTION-BEGIN %s",
+            vm_uuid, peer, data
+        )
         secret = os.urandom(4)
-        LOG.debug(">> %s VMOTION-GOAHEAD %s %s", peer, data, secret)
+        LOG.debug(
+            "%s >> %s VMOTION-GOAHEAD %s %s",
+            vm_uuid, peer, data, secret
+        )
         writer.write(IAC + SB + VMWARE_EXT + VMOTION_GOAHEAD +
                      data + secret + IAC + SE)
         await writer.drain()
 
-    async def handle_vmotion_peer(self, writer, data):
+    async def handle_vmotion_peer(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
-        LOG.debug("<< %s VMOTION-PEER %s", peer, data)
-        LOG.debug("<< %s VMOTION-PEER-OK %s", peer, data)
+        LOG.debug("%s << %s VMOTION-PEER %s", vm_uuid, peer, data)
+        LOG.debug(
+            "%s << %s VMOTION-PEER-OK %s",
+            vm_uuid, peer, data
+        )
         writer.write(IAC + SB + VMWARE_EXT + VMOTION_PEER_OK + data + IAC + SE)
         await writer.drain()
 
-    def handle_vmotion_complete(self, socket, data):
+    def handle_vmotion_complete(self, socket, data, vm_uuid):
         peer = socket.getpeername()
-        LOG.debug("<< %s VMOTION-COMPLETE %s", peer, data)
+        LOG.debug(
+            "%s << %s VMOTION-COMPLETE %s",
+            vm_uuid, peer, data
+        )
 
-    def handle_vmotion_abort(self, writer, data):
+    def handle_vmotion_abort(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
-        LOG.debug("<< %s VMOTION-ABORT %s", peer, data)
+        LOG.debug("%s << %s VMOTION-ABORT %s", vm_uuid, peer, data)
 
-    async def handle_do(self, writer, opt):
+    async def handle_do(self, writer, opt, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
-        LOG.debug("<< %s DO %s", peer, opt)
+        LOG.debug("%s << %s DO %s", vm_uuid, peer, opt)
         if opt in (BINARY, SGA):
-            LOG.debug(">> %s WILL", peer)
+            LOG.debug("%s >> %s WILL", vm_uuid, peer)
             writer.write(IAC + WILL + opt)
             await writer.drain()
         else:
-            LOG.debug(">> %s WONT", peer)
+            LOG.debug("%s >> %s WONT", vm_uuid, peer)
             writer.write(IAC + WONT + opt)
             await writer.drain()
 
-    async def handle_will(self, writer, opt):
+    async def handle_will(self, writer, opt, vm_uuid):
         socket = writer.get_extra_info('socket')
         peer = socket.getpeername()
-        LOG.debug("<< %s WILL %s", peer, opt)
+        LOG.debug("%s << %s WILL %s", vm_uuid, peer, opt)
         if opt in (BINARY, SGA, VMWARE_EXT):
-            LOG.debug(">> %s DO", peer)
+            LOG.debug("%s; >> %s DO", vm_uuid, peer)
             writer.write(IAC + DO + opt)
             await writer.drain()
         else:
-            LOG.debug(">> %s DONT", peer)
+            LOG.debug("%s >> %s DONT", vm_uuid, peer)
             writer.write(IAC + DONT + opt)
             await writer.drain()
 
     async def option_handler(self, cmd, opt, writer, data=None):
         socket = writer.get_extra_info('socket')
+        uuid = self.sock_to_uuid.get(socket)
         if cmd == SE and data[0:1] == VMWARE_EXT:
             vmw_cmd = data[1:2]
-
             if vmw_cmd == KNOWN_SUBOPTIONS_1:
-                await self.handle_known_suboptions(writer, data[2:])
+                await self.handle_known_suboptions(writer, data[2:], uuid)
             elif vmw_cmd == DO_PROXY:
-                await self.handle_do_proxy(writer, data[2:])
+                await self.handle_do_proxy(writer, data[2:], uuid)
             elif vmw_cmd == VM_VC_UUID:
                 self.handle_vm_vc_uuid(socket, data[2:])
             elif vmw_cmd == VMOTION_BEGIN:
-                await self.handle_vmotion_begin(writer, data[2:])
+                await self.handle_vmotion_begin(writer, data[2:], uuid)
             elif vmw_cmd == VMOTION_PEER:
-                await self.handle_vmotion_peer(writer, data[2:])
+                await self.handle_vmotion_peer(writer, data[2:], uuid)
             elif vmw_cmd == VMOTION_COMPLETE:
-                self.handle_vmotion_complete(socket, data[2:])
+                self.handle_vmotion_complete(socket, data[2:], uuid)
             elif vmw_cmd == VMOTION_ABORT:
-                self.handle_vmotion_abort(writer, data[2:])
+                self.handle_vmotion_abort(writer, data[2:], uuid)
             else:
-                LOG.error("Unknown VMware cmd: %s %s", vmw_cmd, data[2:])
+                LOG.error(
+                    "%s Unknown VMware cmd: %s %s",
+                    uuid, vmw_cmd, data[2:]
+                )
                 writer.close()
         elif cmd == DO:
-            await self.handle_do(writer, opt)
+            await self.handle_do(writer, opt, uuid)
         elif cmd == WILL:
-            await self.handle_will(writer, opt)
+            await self.handle_will(writer, opt, uuid)
 
     async def save_to_log(self, uuid, data):
         fpath = os.path.join(CONF.serial_log_dir, uuid)
