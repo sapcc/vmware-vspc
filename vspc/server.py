@@ -185,7 +185,7 @@ class VspcServer(object):
         peer = socket.getpeername()
         LOG.debug("%s << %s WILL %s", vm_uuid, peer, opt)
         if opt in (BINARY, SGA, VMWARE_EXT):
-            LOG.debug("%s; >> %s DO", vm_uuid, peer)
+            LOG.debug("%s >> %s DO", vm_uuid, peer)
             writer.write(IAC + DO + opt)
             await writer.drain()
         else:
