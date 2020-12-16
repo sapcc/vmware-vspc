@@ -20,6 +20,7 @@ import ssl
 import sys
 from aiohttp import web
 from aiohttp_basicauth import BasicAuthMiddleware
+from uuid import UUID
 
 import aiofiles
 from oslo_config import cfg
@@ -195,6 +196,8 @@ class VspcServer(object):
     async def option_handler(self, cmd, opt, writer, data=None):
         socket = writer.get_extra_info('socket')
         uuid = self.sock_to_uuid.get(socket)
+        if uuid:
+            uuid = str(UUID(uuid))
         if cmd == SE and data[0:1] == VMWARE_EXT:
             vmw_cmd = data[1:2]
             if vmw_cmd == KNOWN_SUBOPTIONS_1:
