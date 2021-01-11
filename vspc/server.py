@@ -105,6 +105,7 @@ class VspcServer(object):
             writer.write(IAC + SB + VMWARE_EXT + WONT_PROXY + IAC + SE)
             await writer.drain()
             writer.close()
+            await writer.wait_closed()
         else:
             LOG.debug(">> %s WILL-PROXY", peer)
             writer.write(IAC + SB + VMWARE_EXT + WILL_PROXY + IAC + SE)
@@ -193,6 +194,7 @@ class VspcServer(object):
             else:
                 LOG.error("Unknown VMware cmd: %s %s", vmw_cmd, data[2:])
                 writer.close()
+                await writer.wait_closed()
         elif cmd == DO:
             await self.handle_do(writer, opt)
         elif cmd == WILL:
@@ -214,6 +216,7 @@ class VspcServer(object):
         if uuid is None:
             LOG.error("%s didn't present UUID", peer)
             writer.close()
+            await writer.wait_closed()
             return
         try:
             while data:
@@ -223,6 +226,7 @@ class VspcServer(object):
             self.sock_to_uuid.pop(socket, None)
         LOG.info("%s disconnected", peer)
         writer.close()
+        await writer.wait_closed()
 
     async def handle_get_consolelog(self, request):
         uuid = request.match_info.get('uuid')
