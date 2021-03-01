@@ -21,6 +21,7 @@ import sys
 from aiohttp import web
 from aiohttp_basicauth import BasicAuthMiddleware
 
+import aioconsole
 import aiofiles
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -83,6 +84,7 @@ SUPPORTED_OPTS = (KNOWN_SUBOPTIONS_1 + KNOWN_SUBOPTIONS_2 + VMOTION_BEGIN +
 class VspcServer(object):
     def __init__(self):
         self.sock_to_uuid = dict()
+        self.new_conn_sleep_time = 0
 
     async def handle_known_suboptions(self, writer, data):
         socket = writer.get_extra_info('socket')
@@ -206,6 +208,9 @@ class VspcServer(object):
             await f.write(data)
 
     async def handle_telnet(self, reader, writer):
+        if self.new_conn_sleep_time:
+            import time
+            time.sleep(self.new_conn_sleep_time)
         opt_handler = functools.partial(self.option_handler, writer=writer)
         telnet = async_telnet.AsyncTelnet(reader, opt_handler)
         socket = writer.get_extra_info('socket')
@@ -262,6 +267,8 @@ class VspcServer(object):
         app.router.add_get('/console_log/{uuid}', self.handle_get_consolelog)
         web_server = app.make_handler()
 
+        console = aioconsole.start_interactive_server(host='localhost', port=4444)
+
         coro = asyncio.start_server(self.handle_telnet,
                                     CONF.host,
                                     CONF.port,
@@ -271,6 +278,7 @@ class VspcServer(object):
                                       CONF.host,
                                       CONF.web_port,
                                       ssl=ssl_context)
+        loop.run_until_complete(console)
         telnet_server = loop.run_until_complete(coro)
         rest_server = loop.run_until_complete(webserv)
 
