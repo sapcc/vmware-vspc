@@ -28,9 +28,14 @@ class AsyncTelnetTest(testtools.TestCase):
 
     def _parse_input(self, data):
         """Parse the given data through the AsyncTelnet() and return the result"""
-        self.telnet.rawq = data
-        _run_async(self.telnet.process_rawq())
-        return self.telnet.cookedq
+        self.telnet._reader = mock.AsyncMock()
+        self.telnet._reader.read.side_effect = (data, b'')
+        text = _run_async(self.telnet.read_some())
+        values = text
+        while text:
+            text = _run_async(self.telnet.read_some())
+            values += text
+        return values
 
     def test_simple(self):
         """Show that the testing works by inputting some data and checking the output"""

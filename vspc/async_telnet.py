@@ -17,8 +17,6 @@
 Telnet client class using asyncio.
 Based on the standard telnetlib module from Python3.
 """
-import asyncio
-
 # Telnet protocol characters (don't change)
 IAC = bytes([255])  # "Interpret As Command"
 DONT = bytes([254])
@@ -36,105 +34,186 @@ class AsyncTelnet:
     def __init__(self, reader, opt_handler):
         self._reader = reader
         self._opt_handler = opt_handler
-        self.rawq = b''
-        self.irawq = 0
-        self.cookedq = b''
-        self.eof = 0
-        self.iacseq = b''  # Buffer for IAC sequence.
-        self.sb = 0  # flag for SB and SE sequence.
-        self.sbdataq = b''
+        self._raw_data = b''
+        self._telnet_q = b''
+        self._eof = False
+        self._read_bytes = 4096
 
-    async def process_rawq(self):
-        """Transfer from raw queue to cooked queue.
+    def _process_telnet_data(self, telnet_data):
+        """Process data found after a single IAC
 
-        Set self.eof when connection is closed.
+        The IAC is included in the data for performance reasons (we don't have
+        to create a new string).
+
+        This function returns fully parsed telnet commands as tuple
+        (command-byte, command-opt-byte, command-data) and an unparsed rest. We
+        might return None instead of a tuple, if we couldn't parse a full
+        command.
+
+        We use string indexing for SB, because that's fast and we know the end
+        string we're looking for. We also use bytearray delete here, because
+        that's faster than creating new strings from a slice.
+
         """
-        buf = [b'', b'']
-        try:
-            while self.rawq:
-                c = await self.rawq_getchar()
-                if not self.iacseq:
-                    if self.sb == 0 and c == theNULL:
-                        continue
-                    if self.sb == 0 and c == b"\021":
-                        continue
-                    if c != IAC:
-                        buf[self.sb] = buf[self.sb] + c
-                        continue
-                    else:
-                        self.iacseq += c
-                elif len(self.iacseq) == 1:
-                    # 'IAC: IAC CMD [OPTION only for WILL/WONT/DO/DONT]'
-                    if c in (DO, DONT, WILL, WONT):
-                        self.iacseq += c
-                        continue
+        # first char after IAC is the command. string splicing to keep it a
+        # byte-string
+        c = telnet_data[1:2]
 
-                    self.iacseq = b''
-                    if c == IAC:
-                        buf[self.sb] = buf[self.sb] + c
-                    else:
-                        if c == SB:  # SB ... SE start.
-                            self.sb = 1
-                            self.sbdataq = b''
-                        elif c == SE:
-                            self.sb = 0
-                            self.sbdataq = self.sbdataq + buf[1]
-                            buf[1] = b''
-                        await self._opt_handler(c, NOOPT, data=self.sbdataq)
-                elif len(self.iacseq) == 2:
-                    cmd = self.iacseq[1:2]
-                    self.iacseq = b''
-                    opt = c
-                    if cmd in (DO, DONT):
-                        await self._opt_handler(cmd, opt)
-                    elif cmd in (WILL, WONT):
-                        await self._opt_handler(cmd, opt)
-        except EOFError:  # raised by self.rawq_getchar()
-            self.iacseq = b''  # Reset on EOF
-            self.sb = 0
-            pass
-        self.cookedq = self.cookedq + buf[0]
-        self.sbdataq = self.sbdataq + buf[1]
+        # these are simple commands without parameter, that are followed by a
+        # single byte opt we return with it - if we have enough data to do
+        # this. Otherwise, we return unparsed data to retrieve more from the
+        # socket
+        if c in (DO, DONT, WILL, WONT):
+            if len(telnet_data) > 2:
+                opt = telnet_data[2:3]
+                del telnet_data[:3]
+                return (c, opt, None), telnet_data
+            else:
+                return None, telnet_data
 
-    async def rawq_getchar(self):
-        """Get next char from raw queue.
+        # this starts an SB block ended by IAC SE.
+        if c == SB:
+            # set to 2 to start looking after the first char we already know to
+            # be SB
+            i = 2
+            while True:
+                # search for the end IAC SE
+                try:
+                    j = telnet_data.index(IAC + SE, i)
+                except ValueError:
+                    # we did not find the end sequence and thus return no
+                    # parsed command - only rest. caller needs to provide more
+                    # data and call us again
+                    return None, telnet_data
 
-        Raise EOFError when connection is closed.
+                # we found IAC SE, but it might have been escaped by an IAC
+                # before and thus wouldn't count.
+                # if we just check for one IAC before, this could be escaped,
+                # too, so we need to find the number of escaped IACs. We do
+                # this by walking backwards from our found IAC SE position j
+                # and see how many IAC we find.
+                for k in range(j):
+                    if telnet_data[j - k - 1:j - k] == IAC:
+                        continue
+                    break
+                # a non-even number of IACs means, there was also one for us in
+                # the mix (and maybe a couple more escaped IACs before), so we
+                # ignore the IAC SE and continue our search for an IAC SE
+                # after it
+                if k % 2 == 1:
+                    i = j + 1
+                    continue
+
+                # we found a valid end and can return the cmd and its data.
+                # SB/SE commands have no opts, so we return NOOPT as the
+                # option. escaped IACs need to be replaced by a single IAC. We
+                # return SE here, as we only contain data when we encounter SE.
+                # In theory, one would also have to return an SB command with
+                # empty data ...
+                cmd_data = telnet_data[2:j].replace(IAC + IAC, IAC)
+                del telnet_data[:j + 2]
+
+                return (SE, NOOPT, cmd_data), telnet_data
+
+        if c == IAC:
+            # this probably means, our telnet_data was borked and
+            # _process_raw_data() didn't handle an escaped IAC properly or we
+            # fetched more data and
+            raise RuntimeError('We got an IAC after what should be an IAC')
+
+        # We encountered a telnet command we don't understand.
+        raise RuntimeError('unknown start: 0x{:x} ({:d})'.format(c[0], c[0]))
+
+    def _process_raw_data(self, raw_data):
+        """Process raw data bytearray into text, telnet_queue and rest
+
+        We use string indexing here, because that's fast and we know that any
+        telnet command has to start with IAC. We also use bytearray delete
+        here, because that's faster than creating new strings from a slice.
+
+        At least one of telnet_queue and rest is None on every return.
         """
-        if not self.rawq:
-            await self.fill_rawq()
-            if self.eof:
-                raise EOFError
-        c = self.rawq[self.irawq:self.irawq + 1]
-        self.irawq = self.irawq + 1
-        if self.irawq >= len(self.rawq):
-            self.rawq = b''
-            self.irawq = 0
-        return c
+        i = 0
+        contains_escaped_iac = False
+        while True:
+            try:
+                # search for IAC occurrences at or after start index i
+                j = raw_data.index(IAC, i)
+            except ValueError:
+                # there was no IAC in the whole rest of data -> everything is
+                # text
+                if contains_escaped_iac:
+                    return raw_data.replace(IAC + IAC, IAC), None, None
+                else:
+                    return raw_data, None, None
 
-    async def fill_rawq(self):
-        """Fill raw queue from exactly one recv() system call.
+            if len(raw_data) < j + 2:
+                # we need to get more data to decide if this is an IAC IAC. we
+                # return what we found - it is text - , so we don't have to
+                # rescan again. it's faster than scanning the whole raw_data
+                # again once it is extended.
+                # + 2 because j is an index and we compare with a length and
+                # we need one more char afterwards
+                text = raw_data[:j]
+                if contains_escaped_iac:
+                    text = text.replace(IAC + IAC, IAC)
+                del raw_data[:j]
+                return text, None, raw_data
 
-        Set self.eof when connection is closed.
-        """
-        if self.irawq >= len(self.rawq):
-            self.rawq = b''
-            self.irawq = 0
-        # The buffer size should be fairly small so as to avoid quadratic
-        # behavior in process_rawq() above
-        buf = await self._reader.read(50)
-        self.eof = (not buf)
-        self.rawq = self.rawq + buf
+            if raw_data[j + 1:j + 2] == IAC:
+                # escaped IAC (IAC IAC). we need to put 1 IAC into output, but
+                # we don't do it here in case we have lots of them, because
+                # byte-concat does take some time. we just mark it and replace
+                # every occurrence at the end. this is another scan, but is
+                # still faster.
+                contains_escaped_iac = True
+                # this is now one step after the IAC IAC
+                i = j + 2
+                continue
+
+            # we found an IAC in j and it wasn't one of the special cases
+            # above, so we return text and telnet data with IAC (without would
+            # cost more as it creates a new string)
+            text = raw_data[:j]
+            if contains_escaped_iac:
+                text = text.replace(IAC + IAC, IAC)
+            del raw_data[:j]
+            return text, raw_data, None
+
+    async def _read_raw_data(self):
+        """Read from our reader and set EOF if it occurs"""
+        buf = await self._reader.read(self._read_bytes)
+        if not buf:
+            self._eof = True
+        return bytearray(buf)
 
     async def read_some(self):
-        """Read at least one byte of cooked data unless EOF is hit.
+        """Read currently available data
 
         Return b'' if EOF is hit.
         """
-        await self.process_rawq()
-        while not self.cookedq and not self.eof:
-            await self.fill_rawq()
-            await self.process_rawq()
-        buf = self.cookedq
-        self.cookedq = b''
-        return buf
+        # fetch something if we don't have anything
+        if not self._raw_data and not self._telnet_q:
+            self._raw_data = await self._read_raw_data()
+
+        while not self._eof:
+            if not self._telnet_q:
+                text, self._telnet_q, self._raw_data = self._process_raw_data(self._raw_data)
+                if text:
+                    return bytes(text)
+
+            if self._telnet_q:
+                telnet_cmd, rest = self._process_telnet_data(self._telnet_q)
+                if telnet_cmd:
+                    self._telnet_q = b''
+                    self._raw_data = rest
+                    await self._opt_handler(telnet_cmd[0], telnet_cmd[1], data=telnet_cmd[2])
+                else:
+                    self._telnet_q = rest + await self._read_raw_data()
+            else:
+                if self._raw_data:
+                    self._raw_data = self._raw_data + await self._read_raw_data()
+                else:
+                    self._raw_data = await self._read_raw_data()
+
+        return b''
