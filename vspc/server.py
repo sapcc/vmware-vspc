@@ -22,7 +22,6 @@ from aiohttp import web
 from aiohttp_basicauth import BasicAuthMiddleware
 from uuid import UUID
 
-import aiofiles
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -227,10 +226,10 @@ class VspcServer(object):
         elif cmd == WILL:
             await self.handle_will(writer, opt, uuid)
 
-    async def save_to_log(self, uuid, data):
+    def save_to_log(self, uuid, data):
         fpath = os.path.join(CONF.serial_log_dir, uuid)
-        async with aiofiles.open(fpath, 'ab') as f:
-            await f.write(data)
+        with open(fpath, 'ab') as f:
+            f.write(data)
 
     async def handle_telnet(self, reader, writer):
         opt_handler = functools.partial(self.option_handler, writer=writer)
@@ -247,7 +246,7 @@ class VspcServer(object):
             return
         try:
             while data:
-                await self.save_to_log(uuid, data)
+                self.save_to_log(uuid, data)
                 data = await telnet.read_some()
         finally:
             self.sock_to_uuid.pop(socket, None)
@@ -269,8 +268,8 @@ class VspcServer(object):
             LOG.error('File path %s not found!', file_path)
             raise web.HTTPNotFound()
 
-        async with aiofiles.open(file_path, 'r') as f:
-            file_content = await f.read()
+        with open(file_path, 'r') as f:
+            file_content = f.read()
 
         return web.Response(text=file_content)
 
