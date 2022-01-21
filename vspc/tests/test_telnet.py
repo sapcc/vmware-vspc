@@ -1,14 +1,8 @@
-import asyncio
-
 import mock
 import testtools
 
 from vspc.async_telnet import IAC, SB, SE, AsyncTelnet
-
-
-def _run_async(awaitable):
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(awaitable)
+from vspc.tests.utils import run_async
 
 
 class AsyncTelnetTest(testtools.TestCase):
@@ -30,10 +24,10 @@ class AsyncTelnetTest(testtools.TestCase):
         """Parse the given data through the AsyncTelnet() and return the result"""
         self.telnet._reader = mock.AsyncMock()
         self.telnet._reader.read.side_effect = (data, b'')
-        text = _run_async(self.telnet.read_some())
+        text = run_async(self.telnet.read_some())
         values = text
         while text:
-            text = _run_async(self.telnet.read_some())
+            text = run_async(self.telnet.read_some())
             values += text
         return values
 
