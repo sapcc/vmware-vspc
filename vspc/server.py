@@ -18,10 +18,10 @@ import functools
 import os
 import ssl
 import sys
-from aiohttp import web
-from aiohttp_basicauth import BasicAuthMiddleware
 from uuid import UUID
 
+from aiohttp import web
+from aiohttp_basicauth import BasicAuthMiddleware
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -80,9 +80,9 @@ SUPPORTED_OPTS = (KNOWN_SUBOPTIONS_1 + KNOWN_SUBOPTIONS_2 + VMOTION_BEGIN +
                   DO_PROXY + WILL_PROXY + WONT_PROXY)
 
 
-class VspcServer(object):
+class VspcServer:
     def __init__(self):
-        self.sock_to_uuid = dict()
+        self.sock_to_uuid = {}
 
     async def handle_known_suboptions(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
@@ -294,9 +294,9 @@ class VspcServer(object):
                                     ssl=ssl_context,
                                     loop=loop)
         webserv = loop.create_server(web_server,
-                                      CONF.host,
-                                      CONF.web_port,
-                                      ssl=ssl_context)
+                                     CONF.host,
+                                     CONF.web_port,
+                                     ssl=ssl_context)
         telnet_server = loop.run_until_complete(coro)
         rest_server = loop.run_until_complete(webserv)
 
