@@ -14,8 +14,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 """
-Telnet client class using asyncio.
-Based on the standard telnetlib module from Python3.
+Telnet server class using asyncio.
 """
 # Telnet protocol characters (don't change)
 IAC = bytes([255])  # "Interpret As Command"
