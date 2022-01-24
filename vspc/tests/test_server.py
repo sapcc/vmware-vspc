@@ -12,6 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import asyncio
 from pathlib import Path
 import tempfile
 
@@ -50,7 +51,9 @@ class VspcServerTest(testtools.TestCase):
         srv.sock_to_uuid[socket] = reader_uuid
         myself = self
 
-        def read_some(self):
+        async def read_some(self):
+            # let other coroutines run. this simulates reading from a socket
+            await asyncio.sleep(0)
             return next(myself._readers[self._reader])
 
         fake_read_some.side_effect = read_some
