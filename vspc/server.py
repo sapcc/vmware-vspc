@@ -14,10 +14,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 import asyncio
+from collections import deque
 import functools
 import os
+from pathlib import Path
 import ssl
 import sys
+import threading
 from uuid import UUID
 
 from aiohttp import web
@@ -80,9 +83,65 @@ SUPPORTED_OPTS = (KNOWN_SUBOPTIONS_1 + KNOWN_SUBOPTIONS_2 + VMOTION_BEGIN +
                   DO_PROXY + WILL_PROXY + WONT_PROXY)
 
 
+class BackgroundWriter(threading.Thread):
+    WRITE_TRIGGERING_DATA_AMOUNT = 4096
+
+    def __init__(self, write_queues):
+        self._write_queues = write_queues
+        # the event we set to trigger the background thread write
+        self._writes_available = threading.Event()
+        threading.Thread.__init__(self)
+        self._should_stop = False
+        self._serial_log_dir = Path(CONF.serial_log_dir)
+
+    def stop(self):
+        self._should_stop = True
+        self._writes_available.set()
+
+    def set_writes_available(self, force=False):
+        """Set the inner event starting the queue-flushing
+
+        We only set the event if we're forced to do so or if we have enough
+        data available so that writing it makes sense.
+        """
+        if force or sum(len(d) for q in self._write_queues.values() for d in q) > self.WRITE_TRIGGERING_DATA_AMOUNT:
+            self._writes_available.set()
+
+    def _flush_queues_to_disk(self):
+        LOG.debug("Start flushing data to disk")
+        for uuid in list(self._write_queues):
+            dataqueue = self._write_queues[uuid]
+            if not dataqueue:
+                continue
+
+            datalist = []
+            while dataqueue:
+                datalist.append(dataqueue.popleft())
+            data = b''.join(datalist)
+
+            with (self._serial_log_dir / uuid).open('ab') as f:
+                f.write(data)
+        LOG.debug("flushing data to disk done")
+
+    def run(self):
+        LOG.debug("Starting background writer")
+        while not self._should_stop:
+            # wait for new data to be available
+            self._writes_available.wait(timeout=5)
+
+            self._writes_available.clear()
+
+            self._flush_queues_to_disk()
+
+        self._flush_queues_to_disk()
+        LOG.debug("background writer stopped")
+
+
 class VspcServer:
     def __init__(self):
         self.sock_to_uuid = {}
+        # contains a mapping of uuid -> queue for the background writer to use
+        self._write_queues = {}
 
     async def handle_known_suboptions(self, writer, data, vm_uuid):
         socket = writer.get_extra_info('socket')
@@ -227,9 +286,13 @@ class VspcServer:
             await self.handle_will(writer, opt, uuid)
 
     def save_to_log(self, uuid, data):
-        fpath = os.path.join(CONF.serial_log_dir, uuid)
-        with open(fpath, 'ab') as f:
-            f.write(data)
+        """tell the background thread about the data and that there's data"""
+        if uuid not in self._write_queues:
+            self._write_queues[uuid] = deque([data])
+        else:
+            self._write_queues[uuid].append(data)
+
+        self.background_writer.set_writes_available()
 
     async def handle_telnet(self, reader, writer):
         opt_handler = functools.partial(self.option_handler, writer=writer)
@@ -273,7 +336,22 @@ class VspcServer:
 
         return web.Response(text=file_content)
 
+    async def check_background_writer(self):
+        """Make sure the background_writer is alive, die otherwise
+
+        If the background_writer is gone, we lose our main functionality of
+        writing down log lines and thus exit the program.
+        """
+        while True:
+            if not self.background_writer.is_alive():
+                raise RuntimeError('Background writer thread died.')
+
+            await asyncio.sleep(10)
+
     def start(self):
+        self.background_writer = BackgroundWriter(self._write_queues)
+        self.background_writer.start()
+
         loop = asyncio.get_event_loop()
         ssl_context = None
         if CONF.cert:
@@ -305,16 +383,18 @@ class VspcServer:
         LOG.info("Serving rest api on %s", rest_server.sockets[0].getsockname())
         LOG.info("Log directory: %s", CONF.serial_log_dir)
         try:
-            loop.run_forever()
+            loop.run_until_complete(self.check_background_writer())
         except KeyboardInterrupt:
             pass
 
         # Close the server
+        self.background_writer.stop()
         telnet_server.close()
         rest_server.close()
         loop.run_until_complete(telnet_server.wait_closed())
         loop.run_until_complete(rest_server.wait_closed())
         loop.close()
+        self.background_writer.join()
 
 
 def main():
