@@ -61,6 +61,41 @@ class VspcServerTest(testtools.TestCase):
         return reader_uuid, srv.handle_telnet(reader, writer)
 
     @mock.patch.object(async_telnet.AsyncTelnet, 'read_some', autospec=True)
+    def test_performance_save_to_log_simple(self, fake_read_some):
+        """This is less of a test and more of a performance indicator for saving data to file.
+
+        Starts a single write with lots of data.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server.CONF.set_override('serial_log_dir', tmpdir)
+
+            read_some_data = [bytes(f"{i}", 'utf-8') + b'asdf' * 4 + b'\n' for i in range(2)] + [b'']
+
+            srv = server.VspcServer()
+
+            bg_thread = None
+            try:
+                bg_thread = server.BackgroundWriter(srv._write_queues)
+                srv.background_writer = bg_thread
+                bg_thread.start()
+
+                reader_uuid, coro = self._create_test_writer_coro(srv, fake_read_some, read_some_data)
+
+                run_async(coro)
+            finally:
+                if bg_thread is not None:
+                    bg_thread._writes_available.set()
+                    bg_thread.stop()
+                    bg_thread.join()
+
+            for uuid, data in srv._write_queues.items():
+                self.assertEqual(0, len(data))
+
+            p = Path(tmpdir) / reader_uuid
+            self.assertTrue(p.exists())
+            self.assertEqual(b''.join(read_some_data).decode(), p.open().read())
+
+    @mock.patch.object(async_telnet.AsyncTelnet, 'read_some', autospec=True)
     def test_performance_save_to_log_single(self, fake_read_some):
         """This is less of a test and more of a performance indicator for saving data to file.
 
@@ -69,12 +104,28 @@ class VspcServerTest(testtools.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             server.CONF.set_override('serial_log_dir', tmpdir)
 
-            read_some_data = [b'asdf' * 4 + b'\n' for _ in range(20000)] + [b'']
+            read_some_data = [bytes(f"{i}", 'utf-8') + b'asdf' * 4 + b'\n' for i in range(20000)] + [b'']
 
             srv = server.VspcServer()
-            reader_uuid, coro = self._create_test_writer_coro(srv, fake_read_some, read_some_data)
 
-            run_async(coro)
+            bg_thread = None
+            try:
+                bg_thread = server.BackgroundWriter(srv._write_queues)
+                srv.background_writer = bg_thread
+                bg_thread.start()
+
+                reader_uuid, coro = self._create_test_writer_coro(srv, fake_read_some, read_some_data)
+
+                run_async(coro)
+            finally:
+                if bg_thread is not None:
+                    bg_thread.stop()
+                    bg_thread._writes_available.set()
+                    bg_thread.join()
+
+            for uuid, data in srv._write_queues.items():
+                self.assertEqual(0, len(data))
+
             p = Path(tmpdir) / reader_uuid
             self.assertTrue(p.exists())
             self.assertEqual(b''.join(read_some_data).decode(), p.open().read())
@@ -88,17 +139,35 @@ class VspcServerTest(testtools.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             server.CONF.set_override('serial_log_dir', tmpdir)
 
-            read_some_data = [b'asdf' * 4 + b'\n' for _ in range(20000)] + [b'']
+            read_some_data = [bytes(f"{i}", 'utf-8') + b'asdf' * 4 + b'\n' for i in range(20000)] + [b'']
 
             srv = server.VspcServer()
 
-            coros = dict(self._create_test_writer_coro(srv, fake_read_some, read_some_data)
-                         for i in range(20))
+            bg_thread = None
+            try:
+                bg_thread = server.BackgroundWriter(srv._write_queues)
+                srv.background_writer = bg_thread
+                bg_thread.start()
 
-            run_async(coros.values())
+                coros = dict(self._create_test_writer_coro(srv, fake_read_some, read_some_data)
+                             for i in range(20))
 
+                run_async(coros.values())
+            finally:
+                if bg_thread is not None:
+                    bg_thread.stop()
+                    bg_thread._writes_available.set()
+                    bg_thread.join()
+
+            for uuid, data in srv._write_queues.items():
+                self.assertEqual(0, len(data))
+
+            sum_of_stuff = 0
             for i, reader_uuid in enumerate(coros):
                 p = Path(tmpdir) / reader_uuid
                 self.assertTrue(p.exists())
-                self.assertEqual(b''.join(read_some_data).decode(), p.open().read(),
+                data = p.open().read()
+                sum_of_stuff += len(data)
+                self.assertEqual(b''.join(read_some_data).decode(), data,
                                  f"coro {i} did not write out all data")
+            self.assertEqual(20 * len(b''.join(read_some_data).decode()), sum_of_stuff)
