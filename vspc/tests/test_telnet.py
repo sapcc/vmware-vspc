@@ -23,7 +23,21 @@ class AsyncTelnetTest(testtools.TestCase):
     def _parse_input(self, data):
         """Parse the given data through the AsyncTelnet() and return the result"""
         self.telnet._reader = mock.AsyncMock()
-        self.telnet._reader.read.side_effect = (data, b'')
+        # we want to keep the index between calls and thus we need to save it
+        # ouside of the function. to be able to change the non-local variable,
+        # it needs to be some kind of object. therefore, we use a list to save
+        # the actual value
+        i = [0]
+
+        def read(count):
+            if i[0] < len(data):
+                j = i[0]
+                i[0] += count
+                return data[j:j + count]
+
+            return b''
+
+        self.telnet._reader.read.side_effect = read
         text = run_async(self.telnet.read_some())
         values = text
         while text:
