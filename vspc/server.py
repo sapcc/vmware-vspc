@@ -313,6 +313,13 @@ class VspcServer:
                 data = await telnet.read_some()
         finally:
             self.sock_to_uuid.pop(socket, None)
+            if uuid and uuid in self._write_queues and len(self._write_queues[uuid]):
+                # force a flush so we can get rid of the queue
+                self.background_writer.set_writes_available(force=True)
+                # sleep a little to give the background thread time to flush
+                while len(self._write_queues[uuid]):
+                    await asyncio.sleep(0.5)
+                self._write_queues.pop(uuid, None)
         LOG.info("%s disconnected", peer)
         writer.close()
         await writer.wait_closed()
