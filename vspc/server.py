@@ -90,6 +90,7 @@ class BackgroundWriter(threading.Thread):
         self._write_queues = write_queues
         # the event we set to trigger the background thread write
         self._writes_available = threading.Event()
+        self._data_available_estimate = 0
         threading.Thread.__init__(self)
         self._should_stop = False
         self._serial_log_dir = Path(CONF.serial_log_dir)
@@ -98,17 +99,25 @@ class BackgroundWriter(threading.Thread):
         self._should_stop = True
         self._writes_available.set()
 
-    def set_writes_available(self, force=False):
+    def set_writes_available(self, data_len=0, force=False):
         """Set the inner event starting the queue-flushing
 
         We only set the event if we're forced to do so or if we have enough
         data available so that writing it makes sense.
+
+        Passing `data_len` increases the internal data counter by that amount.
+        The counter is used to estimate the available data, because we cannot
+        iterate our `deque` objects while they are getting changed.
         """
-        if force or sum(len(d) for q in self._write_queues.values() for d in q) > self.WRITE_TRIGGERING_DATA_AMOUNT:
+        self._data_available_estimate += data_len
+
+        if force or self._data_available_estimate > self.WRITE_TRIGGERING_DATA_AMOUNT:
             self._writes_available.set()
 
     def _flush_queues_to_disk(self):
         LOG.debug("Start flushing data to disk")
+        self._data_available_estimate = 0
+
         for uuid in list(self._write_queues):
             dataqueue = self._write_queues[uuid]
             if not dataqueue:
@@ -292,7 +301,7 @@ class VspcServer:
         else:
             self._write_queues[uuid].append(data)
 
-        self.background_writer.set_writes_available()
+        self.background_writer.set_writes_available(data_len=len(data))
 
     async def handle_telnet(self, reader, writer):
         opt_handler = functools.partial(self.option_handler, writer=writer)
