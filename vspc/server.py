@@ -115,7 +115,6 @@ class BackgroundWriter(threading.Thread):
             self._writes_available.set()
 
     def _flush_queues_to_disk(self):
-        LOG.debug("Start flushing data to disk")
         self._data_available_estimate = 0
 
         for uuid in list(self._write_queues):
@@ -130,7 +129,6 @@ class BackgroundWriter(threading.Thread):
 
             with (self._serial_log_dir / uuid).open('ab') as f:
                 f.write(data)
-        LOG.debug("flushing data to disk done")
 
     def run(self):
         LOG.debug("Starting background writer")
