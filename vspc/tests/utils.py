@@ -10,5 +10,5 @@ def run_async(awaitable):
     """
     loop = asyncio.get_event_loop()
     if isinstance(awaitable, Iterable):
-        awaitable = asyncio.gather(*awaitable, loop=loop)
+        awaitable = asyncio.gather(*awaitable)
     return loop.run_until_complete(awaitable)

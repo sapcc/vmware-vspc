@@ -1,6 +1,6 @@
 ##############################
 
-FROM python:3.8
+FROM python:3.10
 MAINTAINER "Andrew Karpow <andrew.karpow@sap.com>"
 LABEL source_repository="https://github.com/sapcc/vmware-vspc"
 
