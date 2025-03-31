@@ -383,8 +383,7 @@ class VspcServer:
         coro = asyncio.start_server(self.handle_telnet,
                                     CONF.host,
                                     CONF.port,
-                                    ssl=ssl_context,
-                                    loop=loop)
+                                    ssl=ssl_context)
         webserv = loop.create_server(web_server,
                                      CONF.host,
                                      CONF.web_port,
