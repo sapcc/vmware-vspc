@@ -7,6 +7,6 @@ LABEL source_repository="https://github.com/sapcc/vmware-vspc"
 WORKDIR /usr/src/app
 COPY . .
 
-RUN PBR_VERSION=0.0.3 pip install . dumb-init
+RUN PBR_VERSION=0.0.3 pip install .
 
 CMD [ "vmware-vspc", "--config-file", "/etc/vspc.conf" ]
